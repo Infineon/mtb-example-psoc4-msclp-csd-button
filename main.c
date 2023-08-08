@@ -7,7 +7,7 @@
 * Related Document: See README.md
 *
 *******************************************************************************
-* Copyright 2021-2022, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2021-2023, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -51,51 +51,50 @@
 #include "SpiMaster.h"
 
 /*******************************************************************************
-* User Configurable Macro
-*******************************************************************************/
-/* Set this to 1 to enable SWD debug*/
-#define SWD_DEBUG_ENABLE                 (0u)
+* User configurable Macros
+********************************************************************************/
+
+/* Enable this, if Serial LED needs to be enabled */
+#define ENABLE_SPI_SERIAL_LED           (1u)
+
+/* Enable this, if Tuner needs to be enabled */
+#define ENABLE_TUNER                    (1u)
 
 /*******************************************************************************
 * Fixed Macros
 *******************************************************************************/
-#define CAPSENSE_MSC0_INTR_PRIORITY      (3u)
-#define CY_ASSERT_FAILED                 (0u)
+#define CAPSENSE_MSC0_INTR_PRIORITY     (3u)
+#define CY_ASSERT_FAILED                (0u)
 
-#if !SWD_DEBUG_ENABLE
-/* EZI2C interrupt priority must be higher than CAPSENSE interrupt. */
-#define EZI2C_INTR_PRIORITY              (2u)
-#endif
+/* EZI2C interrupt priority must be higher than CAPSENSE&trade; interrupt. */
+#define EZI2C_INTR_PRIORITY             (2u)
+
 /* Define the conditions to check sensor status */
-#define SENSOR_ACTIVE                    (1u)
-/* setting recommended CDAC Dither scale value. Default is '0u' */
-#define	CDAC_DITHER_SCALE			(1u)
+#define SENSOR_ACTIVE                   (1u)
 
-/* setting recommended CDAC Dither seed value. Default is '255u' */
-#define	CDAC_DITHER_SEED			(15u)
-
-/* setting recommended CDAC Dither poly value. Default is '142u' */
-#define	CDAC_DITHER_POLY			(9u)
 /*******************************************************************************
 * Global Variables
 *******************************************************************************/
-#if !SWD_DEBUG_ENABLE
 cy_stc_scb_ezi2c_context_t ezi2c_context;
-#endif
 stc_serial_led_context_t led_context;
 
 /*******************************************************************************
 * Function Prototypes
 *******************************************************************************/
 static void initialize_capsense(void);
-static void set_Dither_parameters(void);
 static void capsense_msc0_isr(void);
-#if !SWD_DEBUG_ENABLE
+
 static void ezi2c_isr(void);
 static void initialize_capsense_tuner(void);
-#endif
-void led_control();
 
+
+#if ENABLE_SPI_SERIAL_LED
+void led_control();
+#endif
+
+#if CY_CAPSENSE_BIST_EN
+static void measure_sensor_capacitance(uint32_t *sensor_capacitance);
+#endif /* CY_CAPSENSE_BIST_EN */
 
 
 /*******************************************************************************
@@ -117,6 +116,10 @@ int main(void)
 {
     cy_rslt_t result;
 
+    #if CY_CAPSENSE_BIST_EN
+    uint32_t sensor_capacitance[CY_CAPSENSE_SENSOR_COUNT];
+    #endif
+
     /* Initialize the device and board peripherals */
     result = cybsp_init();
 
@@ -132,12 +135,18 @@ int main(void)
     /* Initialize SPI master */
     result = init_spi_master();
 
-#if !SWD_DEBUG_ENABLE
     /* Initialize EZI2C */
     initialize_capsense_tuner();
-#endif
+
     /* Initialize MSC CAPSENSE */
     initialize_capsense();
+
+
+    #if CY_CAPSENSE_BIST_EN
+    /* Measure the self capacitance of sensor electrode using BIST */
+    measure_sensor_capacitance(sensor_capacitance);
+    #endif /* CY_CAPSENSE_BIST_EN */
+
 
     /* Start the first scan */
     Cy_CapSense_ScanAllSlots(&cy_capsense_context);
@@ -149,13 +158,16 @@ int main(void)
             /* Process all widgets */
             Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
 
+
+            #if ENABLE_SPI_SERIAL_LED
          /* Serial LED control for showing the CAPSENSE touch status (feedback) */
             led_control();
+            #endif
 
-            #if !SWD_DEBUG_ENABLE
+            #if ENABLE_TUNER
             /* Establishes synchronized communication with the CAPSENSE Tuner tool */
             Cy_CapSense_RunTuner(&cy_capsense_context);
-            #endif       
+            #endif
 
             /* Start the next scan */
             Cy_CapSense_ScanAllSlots(&cy_capsense_context);
@@ -192,14 +204,7 @@ static void initialize_capsense(void)
         Cy_SysInt_Init(&capsense_msc0_interrupt_config, capsense_msc0_isr);
         NVIC_ClearPendingIRQ(capsense_msc0_interrupt_config.intrSrc);
         NVIC_EnableIRQ(capsense_msc0_interrupt_config.intrSrc);
-        
-        /* Setting calibration percentage to 70 */
-        Cy_CapSense_SetCalibrationTarget(70u,CY_CAPSENSE_CSD_GROUP,&cy_capsense_context);
 
-        /* setting Dither parameter
-    	 * Must be called after Cy_CapSense_Init() and before Cy_CapSense_Enable()
-    	 */
-    	set_Dither_parameters();
 
         /* Initialize the CAPSENSE firmware modules. */
         status = Cy_CapSense_Enable(&cy_capsense_context);
@@ -225,7 +230,6 @@ static void capsense_msc0_isr(void)
     Cy_CapSense_InterruptHandler(CY_MSCLP0_HW, &cy_capsense_context);
 }
 
-#if !SWD_DEBUG_ENABLE
 /*******************************************************************************
 * Function Name: initialize_capsense_tuner
 ********************************************************************************
@@ -276,8 +280,9 @@ static void ezi2c_isr(void)
 {
     Cy_SCB_EZI2C_Interrupt(CYBSP_EZI2C_HW, &ezi2c_context);
 }
-#endif
 
+
+#if ENABLE_SPI_SERIAL_LED
 /*******************************************************************************
 * Function Name: led_control
 * ********************************************************************************
@@ -324,43 +329,33 @@ void led_control()
 
     serial_led_control(&led_context);
 }
+#endif
+
+
+#if CY_CAPSENSE_BIST_EN
 /*******************************************************************************
-* Function Name: set_Dither_parameters
+* Function Name: measure_sensor_capacitance
 ********************************************************************************
 * Summary:
-*  This functions sets the below CDAC Dither parameters to achive better performance
-*  1. CDAC_Dither_Scale
-*  		- Default value is '0'
-*  		- Recommended value defined in macro 'CDAC_DITHER_SCALE'
-*  2. CDAC_Dither_poly
-*  		- Default value is '142'
-*  		- Recommended value defined in macro 'CDAC_DITHER_POLY'
-*  3. CDAC_Dither_Seed
-*  		- Default value is '255'
-*  		- Recommended value defined in macro 'CDAC_DITHER_SEED'
+*  Measures the self capacitance of the sensor electrode (Cp) in Femto Farad and
+*  stores its value in the variable sensor_capacitance.
 *
-*  Note : Must be called after Cy_CapSense_Init() and before Cy_CapSense_Enable
-*
-*  Refer CE Readme for more details
-*  Parameters:  void
-*  Return:  void
 *******************************************************************************/
-static void set_Dither_parameters(void)
+static void measure_sensor_capacitance(uint32_t *sensor_capacitance)
 {
-	uint32_t wdIndex;
+    /* For BIST configuration Connecting all Inactive sensor connections (ISC) of CSD sensors to to shield*/
+    Cy_CapSense_SetInactiveElectrodeState(CY_CAPSENSE_SNS_CONNECTION_SHIELD,
+                                                  CY_CAPSENSE_BIST_CSD_GROUP, &cy_capsense_context);
 
-	/* set Dither scale for each widgets*/
-	for (wdIndex = 0u; wdIndex < CY_CAPSENSE_TOTAL_WIDGET_COUNT; wdIndex++)
-	{
-		cy_capsense_context.ptrWdContext[wdIndex].cdacDitherValue = CDAC_DITHER_SCALE;
-	}
+    /*Runs the BIST to measure the sensor capacitance*/
+    Cy_CapSense_RunSelfTest(CY_CAPSENSE_BIST_SNS_CAP_MASK,
+                &cy_capsense_context);
+        memcpy(sensor_capacitance,
+                cy_capsense_context.ptrWdConfig->ptrSnsCapacitance,
+                CY_CAPSENSE_SENSOR_COUNT * sizeof(uint32_t));
 
-	/* set Dither poly for all widgets*/
-	cy_capsense_context.ptrInternalContext->cdacDitherPoly = CDAC_DITHER_POLY;
-
-	/* set Dither seed for all widgets*/
-	cy_capsense_context.ptrInternalContext->cdacDitherSeed = CDAC_DITHER_SEED;
 }
+#endif /* CY_CAPSENSE_BIST_EN */
 
 
 /* [] END OF FILE */

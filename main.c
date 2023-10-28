@@ -2,7 +2,7 @@
 * File Name: main.c
 *
 * Description: This is the source code for the PSoC 4 MSCLP self-capacitance
-* button tuning code example for ModusToolbox.
+* button tuning with Gesture detection code example for ModusToolbox.
 *
 * Related Document: See README.md
 *
@@ -54,17 +54,30 @@
 * User configurable Macros
 ********************************************************************************/
 
-/* Enable this, if Serial LED needs to be enabled */
-#define ENABLE_SPI_SERIAL_LED           (1u)
-
-/* Enable this, if Tuner needs to be enabled */
-#define ENABLE_TUNER                    (1u)
+#define TIMESTAMP_INTERVAL_IN_MILSEC    (50u)
+#define LED_TIMEOUT_IN_MILSEC           (1000u)
 
 /*******************************************************************************
 * Fixed Macros
 *******************************************************************************/
 #define CAPSENSE_MSC0_INTR_PRIORITY     (3u)
 #define CY_ASSERT_FAILED                (0u)
+
+#define ILO_FREQ                        (40000u)
+#define TIME_IN_US                      (1000000u)
+
+#define TIME_PER_TICK_IN_US             ((float)1/ILO_FREQ)*TIME_IN_US
+#define SYS_TICK_INTERVAL               (TIMESTAMP_INTERVAL_IN_MILSEC*1000/(TIME_PER_TICK_IN_US))
+
+#define ONE_FNGR_SINGLE_CLICK_GESTURE   (CY_CAPSENSE_GESTURE_ONE_FNGR_SINGLE_CLICK_MASK)
+#define ONE_FNGR_DOUBLE_CLICK_GESTURE   (CY_CAPSENSE_GESTURE_ONE_FNGR_DOUBLE_CLICK_MASK)
+
+#define TOUCHDOWN_GESTURE               (CY_CAPSENSE_GESTURE_TOUCHDOWN_MASK)
+#define LIFTOFF_GESTURE                 (CY_CAPSENSE_GESTURE_LIFTOFF_MASK)
+#define NO_GESTURE_DETECTED             (0u)
+
+#define MAX_COUNTER_VALUE               (0xFFFFFFFF)
+
 
 /* EZI2C interrupt priority must be higher than CAPSENSE&trade; interrupt. */
 #define EZI2C_INTR_PRIORITY             (2u)
@@ -87,15 +100,21 @@ static void capsense_msc0_isr(void);
 static void ezi2c_isr(void);
 static void initialize_capsense_tuner(void);
 
-
-#if ENABLE_SPI_SERIAL_LED
-void led_control();
-#endif
+void led_control(void);
 
 #if CY_CAPSENSE_BIST_EN
 static void measure_sensor_capacitance(uint32_t *sensor_capacitance);
-#endif /* CY_CAPSENSE_BIST_EN */
+#endif 
 
+static void init_sys_tick();
+void SysTickCallback(void);
+
+uint32_t gesture;
+uint32_t gestureHeldForLed;
+uint32_t led_delay;
+uint32_t clickIntervalTimer;
+uint8_t startDoubleClickTimer;
+uint32_t doubleClickTimeout;
 
 /*******************************************************************************
 * Function Name: main
@@ -112,6 +131,7 @@ static void measure_sensor_capacitance(uint32_t *sensor_capacitance);
 *  int
 *
 *******************************************************************************/
+
 int main(void)
 {
     cy_rslt_t result;
@@ -141,33 +161,70 @@ int main(void)
     /* Initialize MSC CAPSENSE */
     initialize_capsense();
 
+    /* Initializes the system tick */
+     init_sys_tick();
 
     #if CY_CAPSENSE_BIST_EN
     /* Measure the self capacitance of sensor electrode using BIST */
     measure_sensor_capacitance(sensor_capacitance);
-    #endif /* CY_CAPSENSE_BIST_EN */
-
+    #endif 
 
     /* Start the first scan */
     Cy_CapSense_ScanAllSlots(&cy_capsense_context);
+
+    /* Double click wait timeout before confirming single click detection */
+    doubleClickTimeout = CY_CAPSENSE_BUTTON_SELF_CAP_CLICK_TIMEOUT_MAX_VALUE + CY_CAPSENSE_BUTTON_SELF_CAP_SECOND_CLICK_INTERVAL_MIN_VALUE;
 
     for (;;)
     {
         if(CY_CAPSENSE_NOT_BUSY == Cy_CapSense_IsBusy(&cy_capsense_context))
         {
-            /* Process all widgets */
+
+             /* Process all widgets */
             Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
 
+            /*decode all the gestures*/
+            gesture = Cy_CapSense_DecodeWidgetGestures(CY_CAPSENSE_BUTTON_SELF_CAP_WDGT_ID, &cy_capsense_context);
 
-            #if ENABLE_SPI_SERIAL_LED
-         /* Serial LED control for showing the CAPSENSE touch status (feedback) */
+            /*Double click detection. Confirming single click only after double click detection timeout */
+            if((gesture == ONE_FNGR_SINGLE_CLICK_GESTURE)&&(startDoubleClickTimer == 0))
+            {
+                clickIntervalTimer = 0u;
+                startDoubleClickTimer = 1u;
+            }
+            else if((clickIntervalTimer > doubleClickTimeout)&&(startDoubleClickTimer))
+            {
+                clickIntervalTimer = 0u;
+                startDoubleClickTimer = 0u;
+                if(gesture == NO_GESTURE_DETECTED)
+                {
+                    gestureHeldForLed = ONE_FNGR_SINGLE_CLICK_GESTURE;
+                    led_delay = 0;
+                }
+                else
+                {
+                    gestureHeldForLed = gesture;
+                }
+            }
+            else if (( gesture != NO_GESTURE_DETECTED) && ( ( gesture != LIFTOFF_GESTURE ) && ( gesture != TOUCHDOWN_GESTURE ) ) )
+            {
+                clickIntervalTimer = 0u;
+                startDoubleClickTimer = 0u;
+                gestureHeldForLed = gesture;
+                led_delay = 0;
+            }
+
+            else if ( ( gesture == NO_GESTURE_DETECTED )&& ( led_delay >= LED_TIMEOUT_IN_MILSEC  ) )
+            {
+                gestureHeldForLed = 0;
+                led_delay = 0;
+            }
+
+            /* Serial LED control for showing the CAPSENSE touch and gesture detected status (feedback) */
             led_control();
-            #endif
 
-            #if ENABLE_TUNER
             /* Establishes synchronized communication with the CAPSENSE Tuner tool */
             Cy_CapSense_RunTuner(&cy_capsense_context);
-            #endif
 
             /* Start the next scan */
             Cy_CapSense_ScanAllSlots(&cy_capsense_context);
@@ -204,7 +261,6 @@ static void initialize_capsense(void)
         Cy_SysInt_Init(&capsense_msc0_interrupt_config, capsense_msc0_isr);
         NVIC_ClearPendingIRQ(capsense_msc0_interrupt_config.intrSrc);
         NVIC_EnableIRQ(capsense_msc0_interrupt_config.intrSrc);
-
 
         /* Initialize the CAPSENSE firmware modules. */
         status = Cy_CapSense_Enable(&cy_capsense_context);
@@ -281,8 +337,6 @@ static void ezi2c_isr(void)
     Cy_SCB_EZI2C_Interrupt(CYBSP_EZI2C_HW, &ezi2c_context);
 }
 
-
-#if ENABLE_SPI_SERIAL_LED
 /*******************************************************************************
 * Function Name: led_control
 * ********************************************************************************
@@ -291,46 +345,50 @@ static void ezi2c_isr(void)
 * based on the touch status of the CAPSENSE button widget.
 *
 *******************************************************************************/
-void led_control()
+void led_control(void)
 {
     /* Brightness of each LED is represented by 0 to 255,
     *  where 0 indicates LED in OFF state and 255 indicate maximum
     *  brightness of an LED
     */
-    volatile uint8_t brightness_max = 255u;
-    volatile uint8_t brightness_min = 0u;
+     uint8_t brightness_max = 255u;
 
-/*******************************************************************************
-* If the CSD button is active, Turn On LED1 with color Green (Fixed intensity)
-* ******************************************************************************/
-    if (SENSOR_ACTIVE == Cy_CapSense_IsWidgetActive(CY_CAPSENSE_BUTTON_SELF_CAP_WDGT_ID, &cy_capsense_context))
+    /*******************************************************************************
+    * If there is no touch or gesture detected ,LED1 is off
+    * ******************************************************************************/
+    led_context.led_num[LED1].color_red = 0;
+    led_context.led_num[LED1].color_green = 0;
+    led_context.led_num[LED1].color_blue = 0;
+
+    led_context.led_num[LED2].color_red = 0;
+    led_context.led_num[LED2].color_green = 0;
+    led_context.led_num[LED2].color_blue = 0;
+
+    switch(gestureHeldForLed)
     {
-        led_context.led_num[LED1].color_red = brightness_min;
-        led_context.led_num[LED1].color_green = brightness_max;
-        led_context.led_num[LED1].color_blue = brightness_min;
-    }
-    else
-    {
-        led_context.led_num[LED1].color_red = brightness_min;
-        led_context.led_num[LED1].color_green = brightness_min;
-        led_context.led_num[LED1].color_blue = brightness_min;
-    }
+        case ONE_FNGR_SINGLE_CLICK_GESTURE:
+        /* If one finger single click gesture is performed, LED2 will glow RED */
+            led_context.led_num[LED2].color_red = brightness_max;
+            break;
 
-/*******************************************************************************
-* Default, all the LEDs are turned off
-********************************************************************************/
-    led_context.led_num[LED2].color_red = brightness_min;
-    led_context.led_num[LED2].color_green = brightness_min;
-    led_context.led_num[LED2].color_blue = brightness_min;
+        case ONE_FNGR_DOUBLE_CLICK_GESTURE:
+         /* If one finger double click gesture is performed, LED2 will glow BLUE */
+            led_context.led_num[LED2].color_blue = brightness_max;
+            break;
 
-    led_context.led_num[LED3].color_red = brightness_min;
-    led_context.led_num[LED3].color_green = brightness_min;
-    led_context.led_num[LED3].color_blue = brightness_min;
+        default:
+        /*******************************************************************************
+        * If the CSD button is active, Turn On LED1 with color Green (Fixed intensity)
+        *******************************************************************************/
+             if (SENSOR_ACTIVE == Cy_CapSense_IsWidgetActive(CY_CAPSENSE_BUTTON_SELF_CAP_WDGT_ID, &cy_capsense_context))
+             {
+              led_context.led_num[LED1].color_green = brightness_max;
+             }
+             break;
+     }
 
     serial_led_control(&led_context);
 }
-#endif
-
 
 #if CY_CAPSENSE_BIST_EN
 /*******************************************************************************
@@ -355,7 +413,46 @@ static void measure_sensor_capacitance(uint32_t *sensor_capacitance)
                 CY_CAPSENSE_SENSOR_COUNT * sizeof(uint32_t));
 
 }
-#endif /* CY_CAPSENSE_BIST_EN */
+#endif 
+
+/*******************************************************************************
+* Function Name: init_sys_tick
+********************************************************************************
+* Summary:
+*  initializes the system tick with highest possible value to start counting down.
+*  specifying the timestamp increment value
+*******************************************************************************/
+
+ static void init_sys_tick()
+ {
+    Cy_SysTick_Init (CY_SYSTICK_CLOCK_SOURCE_CLK_LF,SYS_TICK_INTERVAL);
+    cy_capsense_context.ptrCommonContext->timestampInterval = TIMESTAMP_INTERVAL_IN_MILSEC;
+    Cy_SysTick_SetCallback(0u,SysTickCallback);
+ }
+
+
+/*******************************************************************************
+* Function Name: SysTickCallback
+********************************************************************************
+* Summary:
+* Wrapper function for incrementing gesture timestamp and handling LED on time  
+*
+*******************************************************************************/
+
+void SysTickCallback(void)
+{
+    Cy_CapSense_IncrementGestureTimestamp(&cy_capsense_context);
+
+    if((led_delay + TIMESTAMP_INTERVAL_IN_MILSEC) < MAX_COUNTER_VALUE)
+    {
+        led_delay += TIMESTAMP_INTERVAL_IN_MILSEC;
+    }
+    
+    if(((clickIntervalTimer + TIMESTAMP_INTERVAL_IN_MILSEC) < MAX_COUNTER_VALUE)&&(startDoubleClickTimer))
+    {
+        clickIntervalTimer += TIMESTAMP_INTERVAL_IN_MILSEC;
+    }
+}
 
 
 /* [] END OF FILE */

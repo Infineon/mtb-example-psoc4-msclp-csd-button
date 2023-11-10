@@ -6,7 +6,7 @@ In addition, this code example also explains how to manually tune the self-capac
 
 [View this README on GitHub.](https://github.com/Infineon/mtb-example-psoc4-msclp-csd-button)
 
-[Provide feedback on this code example.](https://cypress.co1.qualtrics.com/jfe/form/SV_1NTns53sK2yiljn?Q_EED=eyJVbmlxdWUgRG9jIElkIjoiQ0UyMzUxNzgiLCJTcGVjIE51bWJlciI6IjAwMi0zNTE3OCIsIkRvYyBUaXRsZSI6IlBTb0MmdHJhZGU7IDQ6IE1TQ0xQIHNlbGYtY2FwYWNpdGFuY2UgYnV0dG9uIHR1bmluZyIsInJpZCI6Inlhc2h2aSIsIkRvYyB2ZXJzaW9uIjoiMi4xLjAiLCJEb2MgTGFuZ3VhZ2UiOiJFbmdsaXNoIiwiRG9jIERpdmlzaW9uIjoiTUNEIiwiRG9jIEJVIjoiSUNXIiwiRG9jIEZhbWlseSI6IlBTT0MifQ==)
+[Provide feedback on this code example.](https://cypress.co1.qualtrics.com/jfe/form/SV_1NTns53sK2yiljn?Q_EED=eyJVbmlxdWUgRG9jIElkIjoiQ0UyMzUxNzgiLCJTcGVjIE51bWJlciI6IjAwMi0zNTE3OCIsIkRvYyBUaXRsZSI6IlBTb0MmdHJhZGU7IDQ6IE1TQ0xQIHNlbGYtY2FwYWNpdGFuY2UgYnV0dG9uIHR1bmluZyIsInJpZCI6Inlhc2h2aSIsIkRvYyB2ZXJzaW9uIjoiMi4xLjEiLCJEb2MgTGFuZ3VhZ2UiOiJFbmdsaXNoIiwiRG9jIERpdmlzaW9uIjoiTUNEIiwiRG9jIEJVIjoiSUNXIiwiRG9jIEZhbWlseSI6IlBTT0MifQ==)
 
 
 ## Requirements
@@ -31,7 +31,7 @@ In addition, this code example also explains how to manually tune the self-capac
 
 ## Hardware setup
 
-This example uses the board's default configuration. See the kit user guide to ensure that the board is configured correctly.
+This example uses the board's default configuration. See the [kit user guide](www.infineon.com/002-34472) to ensure that the board is configured correctly to use VDDA at 1.8 V
 
 ## Software setup
 
@@ -172,13 +172,19 @@ The project already has the necessary settings by default; therefore, you can go
 
 4. After programming, the application starts automatically.
 
-5. To test the application, place your finger over the CAPSENSE&trade; button and notice that the LED1 turns ON with a green color when touched and turns OFF when the finger is lifted. Observe the following LED2 colors for respective gesture performed:
+> **Note:** After programming, you see the following error message if debug mode is disabled. This can be ignored or enabling debug solves this error.
+
+   ``` c
+   "Error: Error connecting Dp: Cannot read IDR"
+   ```
+
+4. To test the application, place your finger over the CAPSENSE&trade; button and notice that the LED1 turns ON with a green color when touched and turns OFF when the finger is lifted. Observe the following LED2 colors for respective gesture performed:
    
    - One finger single-click , red color
 
    - One finger double-click , blue color 
 
-6. You can also monitor the CAPSENSE&trade; data using the CAPSENSE&trade; tuner application as follows:
+5. You can also monitor the CAPSENSE&trade; data using the CAPSENSE&trade; tuner application as follows:
 
     **Monitor data using CAPSENSE&trade; tuner**
     
@@ -253,9 +259,19 @@ The project already has the necessary settings by default; therefore, you can go
 
       <img src="images/monitor-view-tuner.png" alt=""/>
 
+## Operation at other voltages
+
+[CY8CKIT-040T kit](https://www.infineon.com/CY8CKIT-040T) supports operating voltages of 1.8 V, 3.3 V, and 5 V. Use voltage selection switch available on top of the kit to set the preferred operating voltage and see the [setup the VDDA supply voltage and Debug mode](#set-up-the-vdda-supply-voltage-and-debug-mode-in-device-configurator) section .
+
+This application functionalities are optimally tuned for 1.8 V. However, you can observe the basic functionalities working across other voltages. 
+
+It is recommended to tune application for the preferred voltages for better performance.
+
 </details>
 
 <br>
+
+
 
 ## Tuning procedure
 
@@ -622,7 +638,9 @@ In this application gesture parameters have been set for the typical use case, b
 
 ## Debugging
 
-You can debug this project to step through the code. In the IDE, use the **\<Application Name> Debug (KitProg3_MiniProg4)** configuration in the **Quick Panel**. For more details, see the "Program and debug" section in the [Eclipse IDE for ModusToolbox&trade; user guide](https://www.infineon.com/MTBEclipseIDEUserGuide).
+You can debug this project to step through the code. In the IDE, use the **\<Application Name> Debug (KitProg3_MiniProg4)** configuration in the **Quick Panel**. For details, see the "Program and debug" section in the [Eclipse IDE for ModusToolbox&trade; software user guide](https://www.infineon.com/MTBEclipseIDEUserGuide).
+
+By default, the debug option is disabled in the device configurator. To enable the debug option, see the [Setup VDDA and Debug mode](#set-up-the-vdda-supply-voltage-and-debug-mode-in-device-configurator) section. To achieve low power consumption, it is recommended to disable it.
 
 ## Design and implementation
 
@@ -638,7 +656,7 @@ The successful tuning of the button is indicated by the RGB LED in the Evaluatio
 
 The MOSI pin of the SPI slave peripheral is used to transfer data to the three serially connected LEDs for controlling color, brightness, and ON or OFF operation. The three LEDs form a daisy-chain connection, and communication happens over the serial interface to create an RGB configuration. The LED accepts a 32-bit input code, with three bytes for red, green, and blue colors, five bits for global brightness, and three blank '1' bits. See the [LED datasheet](https://media.digikey.com/pdf/Data%20Sheets/Everlight%20PDFs/12-23C_RSGHBHW-5V01_2C_Rev4_12-17-18.pdf) for more details.
 
-### Steps to set up the VDDA supply voltage in device configurator
+### Set up the VDDA supply voltage and debug mode in Device Configurator
 
 1. Open Device configurator from the Quick panel. 
 
@@ -648,13 +666,20 @@ The MOSI pin of the SPI slave peripheral is used to transfer data to the three s
 
    <img src="images/vdda-settings.png" alt=""/> 
 
+3. By default, the debug mode is disabled for this application to reduce power consumption. Enable the debug mode to enable the SWD pins as follows:
+
+   ##### **Figure 31. Enable debug mode in the System tab of Device Configurator**
+
+   <img src="images/enable_debug.png" alt="Figure 31"/>
+
+
 ### Resources and settings
 
-**Figure 31. EZI2C settings**
+**Figure 32. EZI2C settings**
 
 <img src="images/ezi2c-config.png" alt="" width="600"/>
 
-**Figure 32. SPI settings**
+**Figure 33. SPI settings**
 
 <img src="images/spi-settings.png" alt="" width="600"/>
 
@@ -673,7 +698,7 @@ The MOSI pin of the SPI slave peripheral is used to transfer data to the three s
 
 ### Firmware flow
 
-**Figure 33. Firmware flowchart**
+**Figure 34. Firmware flowchart**
 
 <img src="images/firmware-flowchart.png" alt="" width="500"/>
 
@@ -708,6 +733,7 @@ Document title: *CE235178* - *PSoC&trade; 4: MSCLP self-capacitance button tunin
  1.1.0   | Minor folder structure changes that doesn't break backward compatibility.
  2.0.0   | Major update to support ModusToolbox&trade; software v3.1 and the BSP changes. This version is not backward compatible with previous versions of ModusToolbox&trade; software.
  2.1.0   | Gesture feature demonstrated on CSD Button. 
+ 2.1.1   | Minor configuration and readme update.
 <br>
 
 All referenced product or service names and trademarks are the property of their respective owners.
